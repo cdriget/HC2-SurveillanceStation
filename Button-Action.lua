@@ -1,17 +1,16 @@
 ------------------------------------------------------------
--- Module  : Synology Surveillance Station v4.3
+-- Module  : Synology Surveillance Station v4.4
 -- Button  : Start/Stop recording / Enable/Disable camera
 ------------------------------------------------------------
 
 -- User configurable variables
 local login = "Fibaro"
 local password = "password"
-local cameras = {0} -- {1,2,4,5,6}
 local action = "start" -- start/stop/Enable/Disable
 
 -- System variables
 local debug_trace = false
-error = false
+local error = false
 local selfID = fibaro:getSelfId()
 local ip = fibaro:get(selfID, 'IPAddress')
 local port = fibaro:get(selfID, 'TCPPort')
@@ -66,24 +65,15 @@ function Message(log_msg, label_msg, trace, debug_msg)
 end
 
 -- Get Cameras list
-local camera = false
-if cameras then
-	for k, v in ipairs(cameras) do
-		if v > 0 then
-			Message(nil, nil, false, "cameras{} exists")
-			camera = true
-			break
-		end
-	end
-end
-if not camera then
-	local label = fibaro:get(selfID, "ui.LabelCameras.value")
-	if label ~= nil and label ~= "" then
-		Message(nil, nil, false, "Create cameras{}")
-		cameras = json.decode(label)
-	end
+local cameras = {}
+local label = fibaro:get(selfID, "ui.LabelCameras.value")
+if label ~= nil and label ~= "" then
+	cameras = json.decode(label)
 end
 Message(nil, nil, false, "cameras{} : " .. json.encode(cameras))
+
+-- Get SurvStation_Status variable name
+local VG_status = fibaro:get(selfID, "ui.LabelVG.value")
 
 -- Generate new SID
 function GetSID()
@@ -138,13 +128,13 @@ function Action()
 						Message("OK", action.." OK", true, '<span style="color:green;">Synology Surveillance Station '..action..' camera "'..tostring(cameras[i])..'" OK</span>')
 					end
 					if action == "start" then
-						fibaro:setGlobal('SurvStation_Status', "Recording")
+						fibaro:setGlobal(VG_status, "Recording")
 					elseif action == "stop" then
-						fibaro:setGlobal('SurvStation_Status', "Enabled")
+						fibaro:setGlobal(VG_status, "Enabled")
 					elseif action == "Enable" then
-						fibaro:setGlobal('SurvStation_Status', "Enabled")
+						fibaro:setGlobal(VG_status, "Enabled")
 					elseif action == "Disable" then
-						fibaro:setGlobal('SurvStation_Status', "Disabled")
+						fibaro:setGlobal(VG_status, "Disabled")
 					end
 				else
 					if action == "start" or action == "stop" then
@@ -181,32 +171,36 @@ if action == "start" or action == "stop" or action == "Enable" or action == "Dis
 	if tonumber(errorCode) == 0 and tonumber(status) == 200 then
 		if response ~= nil and response ~= "" then
 			local jsonTable = json.decode(response)
-			if jsonTable.data["SYNO.API.Auth"].maxVersion >= 3 and jsonTable.data["SYNO.SurveillanceStation.Camera"].maxVersion >= 2 then
-				Message(nil, nil, true, "Synology API version OK")
-				pathAuth = jsonTable.data["SYNO.API.Auth"].path
-				pathRecord = jsonTable.data["SYNO.SurveillanceStation.ExternalRecording"].path
-				pathCamera = jsonTable.data["SYNO.SurveillanceStation.Camera"].path
-				Message(nil, nil, false, "Synology API Auth path = "..pathAuth)
-				Message(nil, nil, false, "Synology API Surveillance Station Record path = "..pathRecord)
-				Message(nil, nil, false, "Synology API Surveillance Station Camera path = "..pathCamera)
-				-- Get SID
-				SID = fibaro:getGlobal('SurvStation_SID')
-				if SID == nil or SID == "" then
-					-- No SID, need a new one
-					GetSID()
+			if jsonTable.data["SYNO.API.Auth"] ~= nil and jsonTable.data["SYNO.SurveillanceStation.Camera"] ~= nil then
+				if jsonTable.data["SYNO.API.Auth"].maxVersion >= 3 and jsonTable.data["SYNO.SurveillanceStation.Camera"].maxVersion >= 2 then
+					Message(nil, nil, true, "Synology API version OK")
+					pathAuth = jsonTable.data["SYNO.API.Auth"].path
+					pathRecord = jsonTable.data["SYNO.SurveillanceStation.ExternalRecording"].path
+					pathCamera = jsonTable.data["SYNO.SurveillanceStation.Camera"].path
+					Message(nil, nil, false, "Synology API Auth path = "..pathAuth)
+					Message(nil, nil, false, "Synology API Surveillance Station Record path = "..pathRecord)
+					Message(nil, nil, false, "Synology API Surveillance Station Camera path = "..pathCamera)
+					-- Get SID
 					SID = fibaro:getGlobal('SurvStation_SID')
-				end
-				Message(nil, nil, false, "Synology API Auth SID = "..SID)
-				Action()
-				if error == true then
-					-- SID has expired, need a new one
-					Destroy()
-					GetSID()
-					SID = fibaro:getGlobal('SurvStation_SID')
+					if SID == nil or SID == "" then
+						-- No SID, need a new one
+						GetSID()
+						SID = fibaro:getGlobal('SurvStation_SID')
+					end
+					Message(nil, nil, false, "Synology API Auth SID = "..SID)
 					Action()
+					if error == true then
+						-- SID has expired, need a new one
+						Destroy()
+						GetSID()
+						SID = fibaro:getGlobal('SurvStation_SID')
+						Action()
+					end
+				else
+					Message("Erreur", action.." failed", true, '<span style="color:red;">Error : Synology API version is too old : <b>DSM 4.0-2251</b> and <b>Surveillance Station 6.3</b> are required</span>')
 				end
 			else
-				Message("Erreur", action.." failed", true, '<span style="color:red;">Error : Synology API version is too old : <b>DSM 4.0-2251</b> and <b>Surveillance Station 6.3</b> are required</span>')
+				Message("Erreur", action.." failed", true, '<span style="color:red;">Error : Can not get Synology API version : Surveillance Station may be stopped</span>')
 			end
 		else
 			Message("Erreur", action.." failed", true, '<span style="color:red;">Error : Can not connect to Synology server, empty response</span>')
@@ -215,5 +209,5 @@ if action == "start" or action == "stop" or action == "Enable" or action == "Dis
 		Message("Erreur", action.." failed", true, '<span style="color:red;">Error : Can not connect to Synology server, errorCode='..errorCode..', status='..status..', ip='..ip..', port='..port..', payload='..payload..', response='..(response or "")..'</span>')
 	end
 else
-	Message("Erreur", action.." failed", true, '<span style="color:red;">Error : "'..action..'" is not a valid action</span>')
+	Message("Erreur", action.." failed", true, '<span style="color:red;">Error : "<b>'..action..'</b>" is not a valid action</span>')
 end

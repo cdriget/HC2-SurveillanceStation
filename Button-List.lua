@@ -1,5 +1,5 @@
 --------------------------------------------------
--- Module  : Synology Surveillance Station v4.3
+-- Module  : Synology Surveillance Station v4.4
 -- Button  : List cameras
 --------------------------------------------------
 
@@ -9,7 +9,7 @@ password = "password"
 
 -- System variables
 local debug_trace = false
-error = false
+local error = false
 local selfID = fibaro:getSelfId()
 local ip = fibaro:get(selfID, 'IPAddress')
 local port = fibaro:get(selfID, 'TCPPort')
@@ -72,13 +72,13 @@ function GetSID()
 				fibaro:setGlobal('SurvStation_SID', jsonTable.data.sid)
 				Message(nil, nil, true, "Synology API Auth OK")
 			else
-				Message("Erreur", action.." failed", true, '<span style="color:red;">Error : API Authentication failure, '..(API_AUTH_ERROR_CODE[tonumber(jsonTable.error.code)] or API_COMMON_ERROR_CODE[tonumber(jsonTable.error.code)] or "???")..'</span>')
+				Message("Erreur", "List failed", true, '<span style="color:red;">Error : API Authentication failure, '..(API_AUTH_ERROR_CODE[tonumber(jsonTable.error.code)] or API_COMMON_ERROR_CODE[tonumber(jsonTable.error.code)] or "???")..'</span>')
 			end
 		else
-			Message("Erreur", action.." failed", true, '<span style="color:red;">Error : API Authentication failure, empty response</span>')
+			Message("Erreur", "List failed", true, '<span style="color:red;">Error : API Authentication failure, empty response</span>')
 		end			
 	else
-		Message("Erreur", action.." failed", true, '<span style="color:red;">Error : API Authentication failure, errorCode='..errorCode..', status='..status..'</span>')
+		Message("Erreur", "List failed", true, '<span style="color:red;">Error : API Authentication failure, errorCode='..errorCode..', status='..status..'</span>')
 	end
 end
 
@@ -159,8 +159,10 @@ function List()
 							Message(nil, nil, true, '<span style="color:red;">Synology Surveillance Station list PTZ patrols failed, errorCode='..errorCode..', status='..status..'</span>')
 						end
 					end
-					-- Update Cameras Label with discovered IDs
-					fibaro:call(selfID, "setProperty", "ui.LabelCameras.value", json.encode(cameras))
+					if fibaro:get(selfID, "ui.LabelCameras.value") == "" then
+						-- Update Cameras Label with discovered IDs
+						fibaro:call(selfID, "setProperty", "ui.LabelCameras.value", json.encode(cameras))
+					end
 					Message("OK", "List OK", false, nil)
 				else
 					Message("Erreur", "List Failed", true, '<span style="color:red;">Found no Camera</span>')
@@ -176,7 +178,7 @@ function List()
 		Message("Erreur", "List Failed", true, '<span style="color:red;">Synology Surveillance Station list cameras failed, errorCode='..errorCode..', status='..status..', response='..(response or "")..'</span>')
 	end
 end
-						
+
 -- Discover available APIs and corresponding information
 fibaro:call(selfID, "setProperty", "ui.LabelStatus.value", "List...")
 local payload = "/webapi/query.cgi?api=SYNO.API.Info&method=Query&version=1&query=SYNO.API.Auth,SYNO.SurveillanceStation.Camera,SYNO.SurveillanceStation.PTZ"
@@ -185,32 +187,36 @@ local response, status, errorCode = Synology:GET(payload)
 if tonumber(errorCode) == 0 and tonumber(status) == 200 then
 	if response ~= nil and response ~= "" then
 		local jsonTable = json.decode(response)
-		if jsonTable.data["SYNO.API.Auth"].maxVersion >= 2 and jsonTable.data["SYNO.SurveillanceStation.Camera"].maxVersion >= 4 and jsonTable.data["SYNO.SurveillanceStation.PTZ"].maxVersion >= 1 then
-			Message(nil, nil, true, "Synology API version OK")
-			pathAuth = jsonTable.data["SYNO.API.Auth"].path
-			pathCamera = jsonTable.data["SYNO.SurveillanceStation.Camera"].path
-			pathPTZ = jsonTable.data["SYNO.SurveillanceStation.PTZ"].path
-			Message(nil, nil, false, "Synology API Auth path = "..pathAuth)
-			Message(nil, nil, false, "Synology API Surveillance Station Camera path = "..pathCamera)
-			Message(nil, nil, false, "Synology API Surveillance Station PTZ path = "..pathPTZ)
-			-- Get SID
-			SID = fibaro:getGlobal('SurvStation_SID')
-			if SID == nil or SID == "" then
-				-- No SID, need a new one
-				GetSID()
+		if jsonTable.data["SYNO.API.Auth"] ~= nil and jsonTable.data["SYNO.SurveillanceStation.Camera"] ~= nil and jsonTable.data["SYNO.SurveillanceStation.PTZ"] ~= nil then
+			if jsonTable.data["SYNO.API.Auth"].maxVersion >= 2 and jsonTable.data["SYNO.SurveillanceStation.Camera"].maxVersion >= 4 and jsonTable.data["SYNO.SurveillanceStation.PTZ"].maxVersion >= 1 then
+				Message(nil, nil, true, "Synology API version OK")
+				pathAuth = jsonTable.data["SYNO.API.Auth"].path
+				pathCamera = jsonTable.data["SYNO.SurveillanceStation.Camera"].path
+				pathPTZ = jsonTable.data["SYNO.SurveillanceStation.PTZ"].path
+				Message(nil, nil, false, "Synology API Auth path = "..pathAuth)
+				Message(nil, nil, false, "Synology API Surveillance Station Camera path = "..pathCamera)
+				Message(nil, nil, false, "Synology API Surveillance Station PTZ path = "..pathPTZ)
+				-- Get SID
 				SID = fibaro:getGlobal('SurvStation_SID')
-			end
-			Message(nil, nil, false, "Synology API Auth SID = "..SID)
-			List()
-			if error == true then
-				-- SID has expired, need a new one
-				Destroy()
-				GetSID()
-				SID = fibaro:getGlobal('SurvStation_SID')
+				if SID == nil or SID == "" then
+					-- No SID, need a new one
+					GetSID()
+					SID = fibaro:getGlobal('SurvStation_SID')
+				end
+				Message(nil, nil, false, "Synology API Auth SID = "..SID)
 				List()
+				if error == true then
+					-- SID has expired, need a new one
+					Destroy()
+					GetSID()
+					SID = fibaro:getGlobal('SurvStation_SID')
+					List()
+				end
+			else
+				Message("Erreur", "List Failed", true, '<span style="color:red;">Error : Synology API version is too old : <b>DSM 4.0-2251</b> and <b>Surveillance Station 6.3</b> are required</span>')
 			end
 		else
-			Message("Erreur", "List Failed", true, '<span style="color:red;">Error : Synology API version is too old : <b>DSM 4.0-2251</b> and <b>Surveillance Station 6.3</b> are required</span>')
+			Message("Erreur", "List Failed", true, '<span style="color:red;">Error : Can not get Synology API version : Surveillance Station may be stopped</span>')
 		end
 	else
 		Message("Erreur", "List Failed", true, '<span style="color:red;">Error : Can not connect to Synology server, empty response</span>')

@@ -1,5 +1,5 @@
 --------------------------------------------------------------------------------
--- Module  : Synology Surveillance Station v4.3
+-- Module  : Synology Surveillance Station v4.4
 -- Button  : Main loop
 -- Author  : Lazer
 -- History : v1    :     March 2014 : Initial release (Lazer)
@@ -11,11 +11,14 @@
 --           v4.1  :    August 2015 : SID optimization (Jojo)
 --           v4.2  : September 2015 : Minor bug fixes (SebCbien)
 --           v4.3  :  February 2016 : Miscellaneous enhancements (Lazer)
+--           v4.4  :     March 2016 : Single/multiple cameras enhancements (Lazer)
 --------------------------------------------------------------------------------
 
 -- User configurable variables
 local login = "Fibaro"
 local password = "password"
+local cameras = {0} -- {1,2,4,5,6}
+local VG_status = "SurvStation_Status"
 local refresh = 10 -- seconds
 local standbyIcon = 1010
 local recordIcon = 1011
@@ -25,8 +28,8 @@ local disableIcon = 1029
 local port = fibaro:get(fibaro:getSelfId(), 'TCPPort')
 
 -- Main object
-if (CheckRecording == nil) then
-	CheckRecording = {
+if (SurvStation == nil) then
+	SurvStation = {
 		-- System variables
 		selfID = fibaro:getSelfId(),
 		Synology = Net.FHttp(fibaro:get(fibaro:getSelfId(), 'IPAddress'), tonumber(port)),
@@ -107,7 +110,7 @@ if (CheckRecording == nil) then
 							local SID = fibaro:getGlobal('SurvStation_SID')
 							if SID == nil or SID == "" then
 								-- No SID, need a new one
-								CheckRecording:GetSID(pathAuth)
+								SurvStation:GetSID(pathAuth)
 								SID = fibaro:getGlobal('SurvStation_SID')
 							end
 							-- Get list of all cameras
@@ -125,25 +128,36 @@ if (CheckRecording == nil) then
 										local unknown = 0
 										local enabled = 0
 										if jsonTable.data.total > 0 then
-											for i = 1, #jsonTable.data.cameras do
-												-- Check current recording status
-												if jsonTable.data.cameras[i].recStatus > 0 then
-													fibaro:debug('<span style="color:green;">Found recording camera <b>'..jsonTable.data.cameras[i].name..'</b> ID=<b>'..jsonTable.data.cameras[i].id..'</b></span>')
-													recording = recording + 1
+											local nbcameras = #jsonTable.data.cameras
+											for i = 1, nbcameras do
+												local camera = false
+												if cameras then
+													for _, v in ipairs(cameras) do
+														if v == jsonTable.data.cameras[i].id then
+															camera = true
+															break
+														end
+													end
 												end
-												-- Check current camera status
-												if not jsonTable.data.cameras[i].enabled then
-													fibaro:debug('<span style="color:blue;">Found disabled camera <b>'..jsonTable.data.cameras[i].name..'</b> ID=<b>'..jsonTable.data.cameras[i].id..'</b></span>')
-													disabled = disabled + 1
+												if camera then
+													-- Check current recording status
+													if jsonTable.data.cameras[i].recStatus > 0 then
+														fibaro:debug('<span style="color:green;">Found recording camera <b>'..jsonTable.data.cameras[i].name..'</b> ID=<b>'..jsonTable.data.cameras[i].id..'</b></span>')
+														recording = recording + 1
+													end
+													-- Check current camera status
+													if not jsonTable.data.cameras[i].enabled then
+														fibaro:debug('<span style="color:blue;">Found disabled camera <b>'..jsonTable.data.cameras[i].name..'</b> ID=<b>'..jsonTable.data.cameras[i].id..'</b></span>')
+														disabled = disabled + 1
+													end
+													if jsonTable.data.cameras[i].status == 0 then enabled = enabled + 1
+													elseif jsonTable.data.cameras[i].status == 1 then disabled = disabled + 1
+													elseif jsonTable.data.cameras[i].status == 2 then activating = activating + 1
+													elseif jsonTable.data.cameras[i].status == 3 then disabling = disabling + 1
+													elseif jsonTable.data.cameras[i].status == 4 then restarting = restarting + 1
+													elseif jsonTable.data.cameras[i].status == 5 then unknown = unknown + 1
+													end
 												end
-												if jsonTable.data.cameras[i].status == 0 then enabled = enabled + 1
-												elseif jsonTable.data.cameras[i].status == 1 then disabled = disabled + 1
-												elseif jsonTable.data.cameras[i].status == 2 then activating = activating + 1
-												elseif jsonTable.data.cameras[i].status == 3 then disabling = disabling + 1
-												elseif jsonTable.data.cameras[i].status == 4 then restarting = restarting + 1
-												elseif jsonTable.data.cameras[i].status == 5 then unknown = unknown + 1
-												end
-												--camStatus[i] = jsonTable.data.cameras[i].status
 											end
 										else
 											fibaro:debug('No camera found')
@@ -151,7 +165,7 @@ if (CheckRecording == nil) then
 										-- Log camera status, update label, and change icon accordingly
 										local currentIcon = fibaro:getValue(self.selfID, "currentIcon")
 										local statusLabel = fibaro:get(self.selfID, "ui.LabelStatus.value")
-										local SurvStation_Status = fibaro:getGlobal('SurvStation_Status')
+										local SurvStation_Status = fibaro:getGlobal(VG_status)
 										if recording > 0 then
 											fibaro:log("Recording...")
 											if tonumber(currentIcon) ~= recordIcon then
@@ -162,7 +176,7 @@ if (CheckRecording == nil) then
 												fibaro:call(self.selfID, "setProperty", "ui.LabelStatus.value", "Recording")
 											end
 											if SurvStation_Status ~= "Recording" then
-												fibaro:setGlobal('SurvStation_Status', "Recording")
+												fibaro:setGlobal(VG_status, "Recording")
 											end
 										elseif disabled > 0 then
 											if tonumber(currentIcon) ~= disableIcon then
@@ -173,7 +187,7 @@ if (CheckRecording == nil) then
 												fibaro:call(self.selfID, "setProperty", "ui.LabelStatus.value", "Disabled")
 											end
 											if SurvStation_Status ~= "Disabled" then
-												fibaro:setGlobal('SurvStation_Status', "Disabled")
+												fibaro:setGlobal(VG_status, "Disabled")
 											end
 										elseif disabling > 0 then
 											if tonumber(currentIcon) ~= disableIcon then
@@ -184,7 +198,7 @@ if (CheckRecording == nil) then
 												fibaro:call(self.selfID, "setProperty", "ui.LabelStatus.value", "Disabling")
 											end
 											if SurvStation_Status ~= "Disabling" then
-												fibaro:setGlobal('SurvStation_Status', "Disabling")
+												fibaro:setGlobal(VG_status, "Disabling")
 											end
 										elseif activating > 0 then
 											if tonumber(currentIcon) ~= disableIcon then
@@ -195,7 +209,7 @@ if (CheckRecording == nil) then
 												fibaro:call(self.selfID, "setProperty", "ui.LabelStatus.value", "Activating")
 											end
 											if SurvStation_Status ~= "Activating" then
-												fibaro:setGlobal('SurvStation_Status', "Activating")
+												fibaro:setGlobal(VG_status, "Activating")
 											end
 										elseif restarting > 0 then
 											if tonumber(currentIcon) ~= disableIcon then
@@ -206,7 +220,7 @@ if (CheckRecording == nil) then
 												fibaro:call(self.selfID, "setProperty", "ui.LabelStatus.value", "Restarting")
 											end
 											if SurvStation_Status ~= "Restarting" then
-												fibaro:setGlobal('SurvStation_Status', "Restarting")
+												fibaro:setGlobal(VG_status, "Restarting")
 											end
 										elseif unknown > 0 then
 											if tonumber(currentIcon) ~= standbyIcon then
@@ -217,7 +231,7 @@ if (CheckRecording == nil) then
 												fibaro:call(self.selfID, "setProperty", "ui.LabelStatus.value", "Unknown")
 											end
 											if SurvStation_Status ~= "Unknown" then
-												fibaro:setGlobal('SurvStation_Status', "Unknown")
+												fibaro:setGlobal(VG_status, "Unknown")
 											end
 										elseif enabled > 0 then
 											if tonumber(currentIcon) ~= standbyIcon then
@@ -228,7 +242,7 @@ if (CheckRecording == nil) then
 												fibaro:call(self.selfID, "setProperty", "ui.LabelStatus.value", "Enabled")
 											end
 											if SurvStation_Status ~= "Enabled" then
-												fibaro:setGlobal('SurvStation_Status', "Enabled")
+												fibaro:setGlobal(VG_status, "Enabled")
 											end
 										else
 											if tonumber(currentIcon) ~= standbyIcon then
@@ -239,14 +253,14 @@ if (CheckRecording == nil) then
 												fibaro:call(self.selfID, "setProperty", "ui.LabelStatus.value", "???")
 											end
 											if SurvStation_Status ~= "???" then
-												fibaro:setGlobal('SurvStation_Status', "???")
+												fibaro:setGlobal(VG_status, "???")
 											end
 										end
 									else
 										fibaro:debug('<span style="color:red;">Error : Synology Surveillance Station list cameras failed, '..(self.API_CAMERA_ERROR_CODE[tonumber(jsonTable.error.code)] or self.API_COMMON_ERROR_CODE[tonumber(jsonTable.error.code)] or "???")..'</span>')
 										-- SID has expired, need a new one
-										CheckRecording:Destroy(pathAuth, SID)
-										CheckRecording:GetSID(pathAuth)
+										SurvStation:Destroy(pathAuth, SID)
+										SurvStation:GetSID(pathAuth)
 									end
 								else
 									fibaro:debug('<span style="color:red;">Error : Synology Surveillance Station list cameras failed, empty response</span>')
@@ -259,7 +273,7 @@ if (CheckRecording == nil) then
 						end
 					else
 						fibaro:debug('<span style="color:red;">Error : Reload function into memory after a Synology restart</span>')
-						CheckRecording = nil
+						SurvStation = nil
 					end
 				else
 					fibaro:debug('<span style="color:red;">Error : Can not connect to Synology server, empty response</span>')
@@ -276,10 +290,11 @@ if (CheckRecording == nil) then
 			-- Wait
 			fibaro:sleep((refresh-3)*1000)
 		end -- main
-	} -- CheckRecording
+	} -- SurvStation
 	fibaro:debug("Function successfully loaded in memory")
 
 	-- Check global variables
+	local selfID = fibaro:getSelfId()
 	local HC2 = Net.FHttp("127.0.0.1", 11111)
 	local response, status, errorCode = HC2:GET("/api/globalVariables/")
 	if tonumber(errorCode) == 0 and tonumber(status) == 200 and response ~= nil and response ~= "" then
@@ -309,22 +324,23 @@ if (CheckRecording == nil) then
 		-- SurvStation_Status
 		Exist = false
 		for _, v in pairs(Variables) do
-			if v.name == "SurvStation_Status" then 
-				fibaro:debug('Global variable "SurvStation_Status" exists')
+			if v.name == VG_status then 
+				fibaro:debug('Global variable "'..VG_status..'" exists')
 				Exist = true
 				break
 			end
 		end
 		-- Create global variable if it does not exist
 		if Exist == false then
-			local payload = '{"name":"SurvStation_Status", "isEnum":0, "value":""}'
+			local payload = '{"name":"'..VG_status..'", "isEnum":0, "value":""}'
 			local response, status, errorCode = HC2:POST("/api/globalVariables", payload)
 			if tonumber(errorCode) == 0 and (tonumber(status) == 200 or tonumber(status) == 201) and response ~= nil and response ~= "" then
-				fibaro:debug('Global variable "SurvStation_Status" created')
+				fibaro:debug('Global variable "'..VG_status..'" created')
 			else
 				fibaro:debug('<span style="display:inline;color:red;">Error : Can not create global variable, errorCode='..errorCode..', status='..status..', payload='..payload..', response='..(response or "")..'</span>')
 			end
 		end
+		fibaro:call(selfID, "setProperty", "ui.LabelVG.value", VG_status)
 
 	else
 		fibaro:debug('<span style="display:inline;color:red;">Error : Cannot get global variable list, errorCode='..errorCode..', status='..status..', response='..(response or "")..'</span>')
@@ -332,9 +348,7 @@ if (CheckRecording == nil) then
 
 	-- Get Cameras list
 	local camera = false
-	local label = fibaro:get(fibaro:getSelfId(), "ui.LabelCameras.value")
-	if label ~= nil and label ~= "" then
-		cameras = json.decode(label)
+	if cameras then
 		for _, v in ipairs(cameras) do
 			if v > 0 then
 				camera = true
@@ -342,12 +356,35 @@ if (CheckRecording == nil) then
 			end
 		end
 	end
-	if not camera then
-		fibaro:debug("No known camera... press List button")
-		fibaro:call(fibaro:getSelfId(), "pressButton", "5")
-		fibaro:sleep(5*1000)
+	if camera then
+		-- Update Cameras Label with given IDs
+		fibaro:debug('<span style="display:inline;color:yellow;">User cameras : '..json.encode(cameras)..'</span>')
+		fibaro:call(selfID, "setProperty", "ui.LabelCameras.value", json.encode(cameras))
+	else
+		local i = 60
+		while not camera do
+			if i >= 60 then -- if 60s have elapsed...
+				-- Press List button
+				fibaro:call(selfID, "setProperty", "ui.LabelCameras.value", "")
+				fibaro:debug("No known camera... press List button")
+				fibaro:call(selfID, "pressButton", "5")
+				i = 0
+			end
+			fibaro:sleep(1*1000) -- wait 1s
+			local label = fibaro:get(selfID, "ui.LabelCameras.value")
+			if label ~= nil and label ~= "" then -- if List button has updated label content
+				cameras = json.decode(label)
+				fibaro:debug('<span style="display:inline;color:yellow;">Discovered cameras : '..json.encode(cameras)..'</span>')
+				camera = true
+				break
+			else
+				fibaro:debug('<span style="display:inline;color:orange;">No camera discovered... still trying</span>')
+			end
+			i = i + 1
+		end
 	end
+
 end
 
 -- Start
-CheckRecording:main()
+SurvStation:main()
